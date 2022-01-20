@@ -74,8 +74,8 @@ clean_data <- function(all_data) {
            group = case_when(age %in% age_range1 & payer == "Self-pay" ~ "Young, Self-pay",
                              age %in% age_range1 & payer == "Medicaid" ~ "Young, Medicaid",
                              age %in% age_range2 & payer == "Medicare" ~ "Old, Medicare"),
-           ed_entry = case_when(ed_entry == 0 ~ "No ED",
-                                T ~ "Suspected ED"),
+           ed_entry = case_when(ed_entry == 0 ~ 0,
+                                T ~ 1),
            hosp_region = case_when(hosp_region == 1 ~ "Northeast",
                                    hosp_region == 2 ~ "Midwest",
                                    hosp_region == 3 ~ "South",
@@ -120,7 +120,7 @@ clean_data <- function(all_data) {
 
 do_matching <- function(starting_df) {
   
-  matching_fit <- matchit(group ~ service_line + elective_admission + ed_entry + female + race, 
+  matching_fit <- matchit(group ~ service_line + elective_admission + female + race, 
                           data = starting_df, 
                           method = 'exact')
   
@@ -160,8 +160,7 @@ do_matching <- function(starting_df) {
     mutate(final_grouping = case_when(group == "Old, Medicare" & matched ~ "Old medicare, matched",
                                       group == "Old, Medicare" & !matched ~ "Old medicare, unmatched",
                                       group == "Young, Self-pay" & matched ~ "Young, Self-pay")) %>% 
-    filter(!is.na(final_grouping)) %>% 
-    filter(matched)
+    filter(!is.na(final_grouping))
   
   return(full_df)
   
@@ -225,9 +224,14 @@ if (F) {
   
   final_df <- cleaned_data$final_df
   
-  full_matched_df <- do_matching(final_df)
+  full_df <- do_matching(final_df)
   
-  table1 <- make_table1(full_matched_df)
+  full_matched_df <- full_df %>% 
+    filter(matched)
+  
+  save(full_matched_df, file = "~/Documents/full_matched.RData")
+  
+  table1 <- make_table1(full_df)
   
   figure1 <- make_money_plot(full_matched_df)
   
