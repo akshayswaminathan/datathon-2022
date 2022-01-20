@@ -2,14 +2,18 @@ source("~/datathon-2022/helper_functions.R")
 library(gtsummary)
 library(MatchIt)
 
-DATA_PATH <- "~/Downloads/"
+DATA_PATH <- "~/Documents/Schoolwork/Stanford/MS1 Winter/Data Competition/Data/"
+AGE_RANGE_1 <- 60:64
+AGE_RANGE_2 <- 65:69
 
-load_data <- function(data_path = DATA_PATH) {
+load_data <- function(data_path = DATA_PATH, data_year) {
   data_files <- list.files(data_path) %>% 
     tibble(file = .) %>% 
-    filter(grepl("^NIS", file)) %>% 
+    filter(grepl(paste0("^NIS", "_20", data_year), file)) %>% 
     pull(file) %>% 
-    setNames(c("core16", "core19", "hospital19", "severity19"))
+    setNames(c(paste0("core", data_year), 
+               paste0("hospital", data_year), 
+               paste0("severity", data_year)))
   
   all_data <- map(data_files,
                   function(x) {
@@ -20,16 +24,19 @@ load_data <- function(data_path = DATA_PATH) {
   return(all_data)
 }
 
+
+
 clean_data <- function(all_data) {
   
-  age_range1 <- 63:64
-  age_range2 <- 65:66
+  age_range1 <- AGE_RANGE_1
+  age_range2 <- AGE_RANGE_2
   age_range <- sort(unique(c(age_range1, age_range2)))
   
   ie_list <- list("Age between 60 and 70" = quo(age %in% age_range),
                   "On Medicare, Medicaid, or self-pay" = quo(pay1 %in% c(1, 2, 4)))
   
-  ie_applied <- make_attrition_table(all_data$core19 %>% 
+  
+  ie_applied <- make_attrition_table(all_data[[1]] %>% 
                                        as_tibble(), ie_list)
   
   initial_attrition_tbl <- ie_applied$cohort_selection
@@ -57,13 +64,14 @@ clean_data <- function(all_data) {
            transfer_in = tran_in,
            transfer_out = tran_out,
            year,
-           income_quartile = zipinc_qrtl) %>% 
-    left_join(all_data$severity19 %>% 
+           income_quartile = zipinc_qrtl,
+           weights = discwt) %>% 
+    left_join(all_data[[3]] %>% 
                 select(key_nis,
                        aprdrg,
                        drg_severity = aprdrg_severity,
                        mortality_risk = aprdrg_risk_mortality)) %>% 
-    left_join(all_data$hospital19 %>% 
+    left_join(all_data[[2]] %>% 
                 select(hosp_nis,
                        hosp_size = hosp_bedsize,
                        hosp_region,
@@ -100,7 +108,7 @@ clean_data <- function(all_data) {
                                               hosp_location_teaching == 3 ~ "Teaching")) 
   
   second_ie_list <- list("Either old medicare or young self-pay" = quo(group %in% c("Old, Medicare", "Young, Self-pay")),
-                         "No missing data on matching variables" = quo(!is.na(elective_admission) & !is.na(race) & !is.na(female)))
+                         "No missing data on matching variables" = quo(!is.na(elective_admission) & !is.na(race) & !is.na(female) & !is.na(income_quartile)))
   
   second_applied_ie <- make_attrition_table(final_df, second_ie_list)
   
@@ -120,7 +128,7 @@ clean_data <- function(all_data) {
 
 do_matching <- function(starting_df) {
   
-  matching_fit <- matchit(group ~ service_line + elective_admission + ed_entry + female + race, 
+  matching_fit <- matchit(group ~ service_line + female + race + hosp_region + urban_rural + income_quartile, 
                           data = starting_df, 
                           method = 'exact')
   
@@ -196,30 +204,56 @@ make_table1 <- function(full_df) {
 }
 
 make_money_plot <- function(full_df) {
-  
+  full_matched_df$edBin <- full_matched_df$ed_entry == "Suspected ED"
   plot_df <- full_matched_df %>% 
-    group_by(age, race) %>% 
+    group_by(age) %>% 
     summarise(mortality = mean(died, na.rm = T),
-              total_charge = mean(total_charges, na.rm = T),
+              #total_charge = mean(total_charges, na.rm = T),
               n_dx = mean(i10_ndx, na.rm = T),
-              n_procedures = mean(i10_npr, na.rm = T),
+              # n_procedures = mean(i10_npr, na.rm = T),
+              #los = mean(los, na.rm = T),
+              ed = mean(edBin,  na.rm = T),
+              elective = mean(elective_admission, na.rm = T),
               transfer_in = mean(transfer_in != 0, na.rm = T),
               transfer_out = mean(transfer_out != 0, na.rm = T)) %>% 
-    pivot_longer(cols = 3:ncol(.),
+    pivot_longer(cols = 2:ncol(.),
                  names_to = "outcome",
                  values_to = "value")
   
-  ggplot(plot_df, aes(x = age, y = value, color = race)) +
+  plot_df$merger <- paste0(plot_df$outcome, plot_df$age %in% AGE_RANGE_1)
+  
+  plot_df_2 <- full_matched_df %>% 
+    group_by(age %in% AGE_RANGE_1) %>% 
+    summarise(mortality = mean(died, na.rm = T),
+              #total_charge = mean(total_charges, na.rm = T),
+              n_dx = mean(i10_ndx, na.rm = T),
+             # n_procedures = mean(i10_npr, na.rm = T),
+             #los = mean(los, na.rm = T),
+             ed = mean(edBin,  na.rm = T),
+             elective = mean(elective_admission, na.rm = T),
+              transfer_in = mean(transfer_in != 0, na.rm = T),
+              transfer_out = mean(transfer_out != 0, na.rm = T)) %>% 
+    pivot_longer(cols = 2:ncol(.),
+                 names_to = "outcome",
+                 values_to = "value")
+  
+  colnames(plot_df_2)[1] <- "age"
+  plot_df_2$merger <- paste0(plot_df_2$outcome, plot_df_2$age)
+  
+  plot_df <- merge(plot_df, plot_df_2, by = "merger")
+  
+  ggplot(plot_df, aes(x = age.x, y = value.x)) +
     geom_point() +
     geom_line() +
-    facet_wrap(~outcome, scales = "free") +
+    geom_line(mapping = aes(y = value.y, group = age.y), color = "blue", linetype = "dashed", size = 1) +
+    facet_wrap(~outcome.x, scales = "free") +
     geom_vline(xintercept = 64.5, linetype = "dashed")
   
 }
 
 if (F) {
   
-  all_data <- load_data()
+  all_data <- load_data(DATA_PATH,19)
   
   cleaned_data <- clean_data(all_data)
   
