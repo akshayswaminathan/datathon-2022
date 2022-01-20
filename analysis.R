@@ -198,18 +198,18 @@ make_table1 <- function(full_df) {
 make_money_plot <- function(full_df) {
   
   plot_df <- full_matched_df %>% 
-    group_by(age) %>% 
+    group_by(age, race) %>% 
     summarise(mortality = mean(died, na.rm = T),
               total_charge = mean(total_charges, na.rm = T),
               n_dx = mean(i10_ndx, na.rm = T),
               n_procedures = mean(i10_npr, na.rm = T),
               transfer_in = mean(transfer_in != 0, na.rm = T),
               transfer_out = mean(transfer_out != 0, na.rm = T)) %>% 
-    pivot_longer(cols = 2:ncol(.),
+    pivot_longer(cols = 3:ncol(.),
                  names_to = "outcome",
                  values_to = "value")
   
-  ggplot(plot_df, aes(x = age, y = value)) +
+  ggplot(plot_df, aes(x = age, y = value, color = race)) +
     geom_point() +
     geom_line() +
     facet_wrap(~outcome, scales = "free") +
@@ -231,5 +231,28 @@ if (F) {
   
   figure1 <- make_money_plot(full_matched_df)
   
+  model_df <- full_matched_df %>% 
+    select(final_grouping, died, drg, elective_admission, female, ed_entry,
+           hosp_region, urban_rural, race, major_dx_cat, income_quartile,
+           hosp_size, service_line) %>% 
+    mutate(age_var = case_when(grepl("young", tolower(final_grouping)) ~ "young",
+                               T ~ "old")) %>% 
+    drop_na()
+  
+  skimr::skim(model_df)
+  
+  outcomes <- c("Mortality" = "died",
+                "Transfer out" = "transfer_out",
+                "Total charges" = "total_charge",
+                "") 
+  
+  model_fit <- glm(died ~ final_grouping, family = binomial, data = model_df)
+  model_fit %>% 
+    broom::tidy(exp = T)
   
 }
+
+
+
+
+
